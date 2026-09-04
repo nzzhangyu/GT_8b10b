@@ -243,4 +243,3 @@ module gtwizard_ultrascale_1_example_top (
     );
 
 endmodule
-
