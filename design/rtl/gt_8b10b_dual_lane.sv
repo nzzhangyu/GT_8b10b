@@ -536,4 +536,3 @@ module gt_8b10b_dual_lane(
     );
 
 endmodule
-
