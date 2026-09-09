@@ -1,29 +1,28 @@
 `timescale 1ns / 1ps
 
 module GI2AXI #(
-    parameter int WORDS_IN_BRAM = 512,
-    parameter int LANE_NUM      = 2
+    parameter int WORDS_IN_BRAM = 512
 )(
     // GT RX Interface Status
-    input  logic [LANE_NUM-1:0]     i_gt_rxresetdone,
-    input  logic [LANE_NUM*32-1:0]  i_rx_data_in,
-    input  logic [LANE_NUM*4-1:0]   i_rxctrl_in,
-    input  logic [LANE_NUM-1:0]     i_rx_clk,
+    input  logic [1:0]   i_gt_rxresetdone,
+    input  logic [31:0]  i_rx_data_in[1:0],
+    input  logic [3:0]   i_rxctrl_in[1:0],
+    input  logic [1:0]   i_rx_usrclk,
 
     // User AXI-Stream Interface (To DDR)
-    output logic [LANE_NUM*32-1:0]  o_m_axi_tx_tdata,
-    output logic [LANE_NUM*4-1:0]   o_m_axi_tx_tkeep,
-    output logic                    o_m_axi_tx_tvalid,
-    input  logic                    i_m_axi_tx_tready,
-    output logic                    o_m_axi_tx_tlast,
+    output logic [63:0]  o_m_axi_tx_tdata,
+    output logic [7:0]   o_m_axi_tx_tkeep,
+    output logic         o_m_axi_tx_tvalid,
+    input  logic         i_m_axi_tx_tready,
+    output logic         o_m_axi_tx_tlast,
 
     // System Interface
-    input  logic                    i_user_clk,        // System AXI clock
-    input  logic                    i_system_reset,
+    input  logic         i_user_clk,        // System AXI clock
+    input  logic         i_system_reset,
 
     // Status Signals           
-    output logic                    o_lane_aligned,    // Indicates both lanes are deskewed
-    output logic                    o_rx_crc_error     // Pulses high if CRC mismatch
+    output logic         o_lane_aligned,    // Indicates both lanes are deskewed
+    output logic         o_rx_crc_error     // Pulses high if CRC mismatch
     );
 
     // ====================================================================
@@ -31,19 +30,19 @@ module GI2AXI #(
     // ====================================================================
 
     // Reset & System Ready
-    logic                   sys_ready;
-    logic                   async_fifo_rst;
-    logic [LANE_NUM-1:0]    rd_rst_busy;
+    logic          sys_ready;
+    logic          async_fifo_rst;
+    logic [1:0]    rd_rst_busy;
 
     // Deskew FIFO Signals
-    logic [35:0]            fifo_dout [LANE_NUM-1:0];
-    logic [LANE_NUM-1:0]    fifo_empty;
-    logic [LANE_NUM-1:0]    fifo_rd_en;
-    logic [LANE_NUM-1:0]    lane_is_align;
-    logic                   aligned_rd_en;
+    logic [35:0]   fifo_dout [1:0];
+    logic [1:0]    fifo_empty;
+    logic [1:0]    fifo_rd_en;
+    logic [1:0]    lane_is_align;
+    logic          aligned_rd_en;
 
-    logic [LANE_NUM*32-1:0] aligned_data;
-    logic [LANE_NUM*4-1:0]  aligned_ctrl;
+    logic [63:0]   aligned_data;
+    logic [7:0]    aligned_ctrl;
 
     // Deskew FSM
     typedef enum logic [1:0] {
@@ -53,25 +52,25 @@ module GI2AXI #(
     } deskew_state_t;
     deskew_state_t dsk_state = ST_DSK_INIT;
 
-    logic [3:0] err_align_cnt;
+    logic [3:0]  err_align_cnt;
 
     // Descrambler Signals
-    logic [LANE_NUM*32-1:0] desc_data;
-    logic [LANE_NUM*4-1:0]  desc_ctrl;
-    logic                   clear_scrambler;
+    logic [63:0] desc_data;
+    logic [7:0]  desc_ctrl;
+    logic        clear_scrambler;
 
     // Framer & Delay Line Signals
     logic is_sof_raw;
     logic is_eof_raw;
     logic in_frame = 1'b0;
 
-    logic [LANE_NUM*32-1:0] rx_data_d0;
-    logic [LANE_NUM*32-1:0] rx_data_d1;
-    logic [LANE_NUM*32-1:0] rx_data_d2;
+    logic [63:0] rx_data_d0;
+    logic [63:0] rx_data_d1;
+    logic [63:0] rx_data_d2;
 
-    logic [LANE_NUM*4-1:0]  rx_ctrl_d0;
-    logic [LANE_NUM*4-1:0]  rx_ctrl_d1;
-    logic [LANE_NUM*4-1:0]  rx_ctrl_d2;
+    logic [7:0]  rx_ctrl_d0;
+    logic [7:0]  rx_ctrl_d1;
+    logic [7:0]  rx_ctrl_d2;
 
     logic valid_d0;
     logic valid_d1;
@@ -86,19 +85,19 @@ module GI2AXI #(
     logic in_frame_d2;
 
     // RX Elastic FIFO Signals
-    logic                   write_to_axi;
-    logic                   axi_tlast_d2;
-    logic                   rx_fifo_empty;
-    logic [LANE_NUM*32:0]   rx_fifo_dout;
-    logic                   rx_fifo_prog_full;
-    logic                   rx_overflow_drop;    // drop current frame  
+    logic          write_to_axi;
+    logic          axi_tlast_d2;
+    logic          rx_fifo_empty;
+    logic [64:0]   rx_fifo_dout;
+    logic          rx_fifo_prog_full;
+    logic          rx_overflow_drop;    // drop current frame  
 
     // CRC 
-    logic                   crc_en;
-    logic                   crc_clear;
-    logic [LANE_NUM*32-1:0] crc_result;
-    logic [15:0]            crc_in_bus [LANE_NUM*2-1:0];
-    logic [15:0]            crc_out_bus[LANE_NUM*2-1:0];
+    logic        crc_en;
+    logic        crc_clear;
+    logic [63:0] crc_result;
+    logic [15:0] crc_in_bus [3:0];
+    logic [15:0] crc_out_bus[3:0];
 
     // ====================================================================
     // Core Logic Implementation
@@ -113,7 +112,7 @@ module GI2AXI #(
     // --------------------------------------------------------------------
     // Lane Deskew Buffers (Async FIFOs for Clock Bridging & Deskew)
     // --------------------------------------------------------------------
-    for (genvar lane = 0; lane < LANE_NUM; lane++) begin : gen_deskew_fifo
+    for (genvar lane = 0; lane < 2; lane++) begin : gen_deskew_fifo
         xpm_fifo_async #(
             .FIFO_MEMORY_TYPE("distributed"),
             .FIFO_WRITE_DEPTH(64),
@@ -123,9 +122,9 @@ module GI2AXI #(
             .USE_ADV_FEATURES("0000")
         ) deskew_fifo_lane (
             .rst         (async_fifo_rst                                            ),
-            .wr_clk      (i_rx_clk[lane]                                            ),
+            .wr_clk      (i_rx_usrclk[lane]                                            ),
             .wr_en       (1'b1                                                      ),
-            .din         ({i_rxctrl_in[lane*4 +: 4], i_rx_data_in[lane*32 +: 32]}   ),
+            .din         ({i_rxctrl_in[lane], i_rx_data_in[lane]}                   ),
             .full        (                                                          ),
             .prog_full   (                                                          ),
             .wr_rst_busy (                                                          ),
@@ -142,7 +141,7 @@ module GI2AXI #(
     // Deskew Alignment FSM
     // --------------------------------------------------------------------
     // Look-ahead for K28.5 Alignment Characters (BCBCBCBC with Ctrl=F)
-    for (genvar lane = 0; lane < LANE_NUM; lane++) begin : gen_align_detect
+    for (genvar lane = 0; lane < 2; lane++) begin : gen_align_detect
         assign lane_is_align[lane] = (fifo_dout[lane][31:0] == 32'hBCBCBCBC) && (fifo_dout[lane][35:32] == 4'hF);
     end
 
@@ -176,7 +175,7 @@ module GI2AXI #(
                         align_mismatch = 1'b1;
                     end
                     else begin
-                        for (int lane = 1; lane < LANE_NUM; lane++) begin
+                        for (int lane = 1; lane < 2; lane++) begin
                             if (fifo_dout[lane] != fifo_dout[0]) begin
                                 align_mismatch = 1'b1;
                             end
@@ -212,7 +211,7 @@ module GI2AXI #(
     // Once ALIGNED, lock them together and only read when BOTH have data.
     assign aligned_rd_en = (dsk_state == ST_DSK_ALIGNED) && !(|fifo_empty);
     
-    for (genvar lane = 0; lane < LANE_NUM; lane++) begin : gen_deskew_read
+    for (genvar lane = 0; lane < 2; lane++) begin : gen_deskew_read
         assign fifo_rd_en[lane]            = (dsk_state == ST_DSK_WAIT_ALIGN && !fifo_empty[lane] && !lane_is_align[lane]) || aligned_rd_en;
         assign aligned_data[lane*32 +: 32] = fifo_dout[lane][31:0];
         assign aligned_ctrl[lane*4  +: 4 ] = fifo_dout[lane][35:32];
@@ -222,9 +221,9 @@ module GI2AXI #(
     //[4] Descrambler
     // --------------------------------------------------------------------
     // Descrambler is cleared when SOF is detected in the aligned data
-    assign clear_scrambler = (aligned_data == {LANE_NUM{32'h1C1C1C1C}}) && (aligned_ctrl == {LANE_NUM{4'hF}});
+    assign clear_scrambler = (aligned_data == {2{32'h1C1C1C1C}}) && (aligned_ctrl == {2{4'hF}});
 
-    for (genvar lane = 0; lane < LANE_NUM; lane++) begin : gen_descrambler
+    for (genvar lane = 0; lane < 2; lane++) begin : gen_descrambler
         aurora_8b10b_SCRAMBLER_TOP descrambler_lane (
             .DATA          (aligned_data[lane*32 +: 32] ),
             .CHAR_IS_K     (aligned_ctrl[lane*4  +: 4 ] ),
@@ -239,8 +238,8 @@ module GI2AXI #(
     // --------------------------------------------------------------------
     // Framer & Delay Line (Look-ahead architecture)
     // --------------------------------------------------------------------
-    assign is_sof_raw = (desc_data == {LANE_NUM{32'h1C1C1C1C}}) && (desc_ctrl == {LANE_NUM{4'hF}});
-    assign is_eof_raw = (desc_data == {LANE_NUM{32'hFDFDFDFD}}) && (desc_ctrl == {LANE_NUM{4'hF}});
+    assign is_sof_raw = (desc_data == {2{32'h1C1C1C1C}}) && (desc_ctrl == {2{4'hF}});
+    assign is_eof_raw = (desc_data == {2{32'hFDFDFDFD}}) && (desc_ctrl == {2{4'hF}});
 
     always_ff @(posedge i_user_clk) begin
         if (async_fifo_rst) begin
@@ -330,12 +329,12 @@ module GI2AXI #(
     assign crc_en    = write_to_axi;
     assign crc_clear = valid_d0 && is_sof_raw;
 
-    for (genvar i = 0; i < LANE_NUM*2; i++) begin : gen_crc_data
+    for (genvar i = 0; i < 4; i++) begin : gen_crc_data
         assign crc_in_bus[i]          = rx_data_d2[i*16 +: 16];
         assign crc_result[i*16 +: 16] = crc_out_bus[i];
     end
 
-    for (genvar i = 0; i < LANE_NUM*2; i++) begin : gen_rx_crc
+    for (genvar i = 0; i < 4; i++) begin : gen_rx_crc
         CRC_16 rx_crc_inst (
             .i_clk       (i_user_clk      ), 
             .i_rst       (async_fifo_rst  ), 
@@ -354,8 +353,8 @@ module GI2AXI #(
         .FIFO_WRITE_DEPTH(4096),     
         .READ_MODE("fwft"),         
         .FIFO_READ_LATENCY(0),
-        .WRITE_DATA_WIDTH(LANE_NUM*32+1),
-        .READ_DATA_WIDTH(LANE_NUM*32+1),
+        .WRITE_DATA_WIDTH(65),
+        .READ_DATA_WIDTH(65),
         .USE_ADV_FEATURES("0707")   
     ) rx_elastic_fifo (
         .wr_clk      (i_user_clk                            ),
@@ -375,7 +374,7 @@ module GI2AXI #(
     assign o_m_axi_tx_tvalid = ~rx_fifo_empty;
     assign o_m_axi_tx_tdata  = rx_fifo_dout[63:0];
     assign o_m_axi_tx_tlast  = rx_fifo_dout[64];
-    assign o_m_axi_tx_tkeep  = {LANE_NUM*4{1'b1}};
+    assign o_m_axi_tx_tkeep  = {8{1'b1}};
     
 
 
