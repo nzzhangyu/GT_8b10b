@@ -51,7 +51,9 @@ module gt_8b10b_dual_lane(
     output wire [3:0]  gt1_m_axis_tkeep,
     output wire        gt1_m_axis_tvalid,
     input  wire        gt1_m_axis_tready,
-    output wire        gt1_m_axis_tlast
+    output wire        gt1_m_axis_tlast,
+
+    input  wire [1:0]  i_sfp_los
     );
 
     localparam logic [9:0] CNT_1MS = 10'h3E7;
@@ -74,11 +76,6 @@ module gt_8b10b_dual_lane(
     logic gtwiz_reset_clk_freerun_int;
     assign gtwiz_reset_clk_freerun_int = INIT_CLK_IN;
 
-    logic gt0_tx_usrclk;
-    logic gt0_rx_usrclk;
-    logic gt1_tx_usrclk;
-    logic gt1_rx_usrclk;
-
     // System Reset Logic
     logic gtwiz_reset_all_int;
 
@@ -97,217 +94,32 @@ module gt_8b10b_dual_lane(
 
     assign gtwiz_reset_all_int = sys_rst_d3;
     assign sys_rst_pulse = ~sys_rst_d3 & sys_rst_d4;
+
+    logic [1:0]  gt_reset_tx_datapath;
+    logic [1:0]  gt_reset_rx_datapath;
+
+    logic [31:0] gt_txdata[1:0];
+    logic [7:0]  gt_txctrl[1:0];
+    logic [31:0] gt_rxdata[1:0];
+    logic [7:0]  gt_rxctrl[1:0];
     
-    // TX User Reset Logic
-    logic gt0_tx_reset_done;
-    logic gt0_tx_reset_done_d1;
-    logic gt0_tx_reset_done_d2;
-    logic gt1_tx_reset_done;
-    logic gt1_tx_reset_done_d1;
-    logic gt1_tx_reset_done_d2;
+    logic [1:0] gt_tx_usrclk;
+    logic [1:0] gt_rx_usrclk;
 
-    always_ff @(posedge gt0_tx_usrclk or negedge gt0_tx_reset_done) begin
-        if (~gt0_tx_reset_done) begin
-            gt0_tx_reset_done_d1 <= 1'b0;
-            gt0_tx_reset_done_d2 <= 1'b0;
-        end
-        else begin
-            gt0_tx_reset_done_d1 <= gt0_tx_reset_done;
-            gt0_tx_reset_done_d2 <= gt0_tx_reset_done_d1;
-        end
-    end
+    logic [1:0] gt_reset_tx_done;
+    logic [1:0] gt_reset_rx_done;
 
-    always_ff @(posedge gt1_tx_usrclk or negedge gt1_tx_reset_done) begin
-        if (~gt1_tx_reset_done) begin
-            gt1_tx_reset_done_d1 <= 1'b0;
-            gt1_tx_reset_done_d2 <= 1'b0;
-        end
-        else begin
-            gt1_tx_reset_done_d1 <= gt1_tx_reset_done;
-            gt1_tx_reset_done_d2 <= gt1_tx_reset_done_d1;
-        end
-    end
+    logic [1:0] gt_rxbyterealign;
 
-    logic gt0_tx_sys_rst;
-    logic gt1_tx_sys_rst;
-    logic gt_sys_rst;
-    logic gt_tx_reset_done;
-    logic gt_tx_reset_done_d1;
-    logic gt_tx_reset_done_pulse;
+    logic [1:0] tx_user_reset;
+    logic [1:0] rx_user_reset;
+    logic       tx_lane_reset;
+    assign tx_lane_reset = gt_reset_tx_done[0] | gt_reset_tx_done[1];
 
-    assign gt0_tx_sys_rst = ~gt0_tx_reset_done_d2;
-    assign gt1_tx_sys_rst = ~gt1_tx_reset_done_d2;
-    assign gt_sys_rst = gt0_tx_sys_rst | gt1_tx_sys_rst;
-    assign gt_tx_reset_done = gt0_tx_reset_done && gt1_tx_reset_done;
-
-    always_ff @(posedge gtwiz_reset_clk_freerun_int)
-        gt_tx_reset_done_d1 <= gt_tx_reset_done;
-    
-    assign gt_tx_reset_done_pulse = gt_tx_reset_done & ~gt_tx_reset_done_d1;    
-
-    // RX User Reset Logic
-    logic gt0_rx_reset_done;
-    logic gt0_rx_reset_done_d1;
-    logic gt0_rx_reset_done_d2;
-    logic gt0_rx_reset_done_d3;
-    logic gt1_rx_reset_done;
-    logic gt1_rx_reset_done_d1;
-    logic gt1_rx_reset_done_d2;
-    logic gt1_rx_reset_done_d3;
-
-    always_ff @(posedge gt0_rx_usrclk or negedge gt0_rx_reset_done) begin
-        if (~gt0_rx_reset_done) begin
-            gt0_rx_reset_done_d1 <= 1'b0;
-            gt0_rx_reset_done_d2 <= 1'b0;
-            gt0_rx_reset_done_d3 <= 1'b0;
-        end
-        else begin
-            gt0_rx_reset_done_d1 <= gt0_rx_reset_done;
-            gt0_rx_reset_done_d2 <= gt0_rx_reset_done_d1;
-            gt0_rx_reset_done_d3 <= gt0_rx_reset_done_d2;
-        end
-    end
-
-    always_ff @(posedge gt1_rx_usrclk or negedge gt1_rx_reset_done) begin
-        if (~gt1_rx_reset_done) begin
-            gt1_rx_reset_done_d1 <= 1'b0;
-            gt1_rx_reset_done_d2 <= 1'b0;
-            gt1_rx_reset_done_d3 <= 1'b0;
-        end
-        else begin
-            gt1_rx_reset_done_d1 <= gt1_rx_reset_done;
-            gt1_rx_reset_done_d2 <= gt1_rx_reset_done_d1;
-            gt1_rx_reset_done_d3 <= gt1_rx_reset_done_d2;
-        end
-    end
-
-    logic gt0_rx_sys_rst;
-    logic gt1_rx_sys_rst;
-
-    assign gt0_rx_sys_rst = ~gt0_rx_reset_done_d3;
-    assign gt1_rx_sys_rst = ~gt1_rx_reset_done_d3;
-
-    // Link Initialization
-    typedef enum logic {
-        ST_IDLE,
-        ST_DELAY
-    } init_state_t;
-
-    init_state_t init_state;
-
-    logic [7:0] us_counter;
-    logic       flag_1us;
-    logic [9:0] ms_counter;
-    logic       flag_1ms;
-    logic [9:0] delay_1ms;
-
-    logic       gt_tx_channel_up_int;
-
-    always_ff @(posedge gtwiz_reset_clk_freerun_int) begin
-        if (gtwiz_reset_all_int) begin
-            us_counter <= 8'h00;
-            flag_1us   <= 1'b0;
-        end
-        else if (us_counter == 8'h63) begin
-            us_counter <= 8'h00;
-            flag_1us   <= 1'b1;
-        end
-        else begin
-            us_counter <= us_counter + 1'b1;
-            flag_1us   <= 1'b0;
-        end
-    end
-
-    always_ff @(posedge gtwiz_reset_clk_freerun_int) begin
-        if (gtwiz_reset_all_int) begin
-            ms_counter <= 10'h000;
-            flag_1ms   <= 1'b0;
-        end
-        else if (ms_counter == CNT_1MS) begin
-            ms_counter <= 10'h000;
-            flag_1ms   <= 1'b1;
-        end
-        else begin
-            if (flag_1us == 1'b1) begin
-                ms_counter <= ms_counter + 1'b1;
-                flag_1ms   <= 1'b0;
-            end
-        end
-    end
-
-    always @(posedge gtwiz_reset_clk_freerun_int) begin
-        if (gtwiz_reset_all_int) begin
-            init_state        <= ST_IDLE;
-            delay_1ms         <= 10'h000;
-            gt_tx_channel_up_int <= 1'b0;
-        end
-        else begin
-            case (init_state)
-                ST_IDLE: begin
-                    delay_1ms <= 10'h000;
-                    if (gt_tx_reset_done_pulse || sys_rst_pulse) begin
-                        init_state <= ST_DELAY;
-                    end
-                    else begin
-                        init_state <= ST_IDLE;
-                    end
-                end
-
-                ST_DELAY: begin
-                    if (delay_1ms == CNT_1MS) begin
-                        delay_1ms            <= 10'h000;
-                        init_state           <= ST_IDLE;
-                        gt_tx_channel_up_int <= 1'b1;
-                    end
-                    else begin
-                        gt_tx_channel_up_int <= 1'b0;
-                        init_state           <= ST_DELAY;
-                        if (flag_1us == 1'b1)
-                            delay_1ms <= delay_1ms + 1'b1;
-                    end
-                end
-                
-                default: begin
-                    gt_tx_channel_up_int <= 1'b0;
-                    init_state        <= ST_IDLE;
-                end
-            endcase
-        end
-    end
-
-    logic gt_tx_channel_up_d1;
-    logic gt_tx_channel_up_d2;
-    logic gt_tx_channel_up_d3;
-
-    always_ff @(posedge gt0_tx_usrclk) begin
-        gt_tx_channel_up_d1 <= gt_tx_channel_up_int && ~sys_rst_d3 && gt_tx_reset_done_d1;
-        gt_tx_channel_up_d2 <= gt_tx_channel_up_d1;
-        gt_tx_channel_up_d3 <= gt_tx_channel_up_d2;
-    end
-
-    assign gt_tx_channel_up = gt_tx_channel_up_d3;
-
-    // TX Data and Control Signals
-    logic [63:0] gt_txdata;
-    logic [7:0]  gt_txctrl;
-    logic [31:0] gt0_txdata;
-    logic [7:0]  gt0_txctrl;
-    logic [31:0] gt1_txdata;
-    logic [7:0]  gt1_txctrl;
-
-    assign gt0_txdata = gt_txdata[31:0];
-    assign gt0_txctrl = {4'h0,gt_txctrl[3:0]};
-    assign gt1_txdata = gt_txdata[63:32];
-    assign gt1_txctrl = {4'h0,gt_txctrl[7:4]};
-
-    logic gt0_rxbyterealign;
-    logic gt1_rxbyterealign;
-
-    // RX Data and Control Signals
-    logic [31:0] gt0_rxdata;
-    logic [7:0]  gt0_rxctrl;
-    logic [31:0] gt1_rxdata;
-    logic [7:0]  gt1_rxctrl;
+    logic [1:0] tx_channel_up;
+    logic [1:0] rx_channel_up;
+    logic       tx_all_channels_up;
+    assign tx_all_channels_up = tx_channel_up[0] & tx_channel_up[1];
 
     gtwizard_ultrascale_0_gtye4_common_wrapper gtye4_common_wrapper_inst (
         .GTYE4_COMMON_BGBYPASSB         (1'b1),
@@ -434,22 +246,22 @@ module gt_8b10b_dual_lane(
         .ch0_gtytxp_out             (TXP[0]),
         .gtwiz_reset_clk_freerun_in (gtwiz_reset_clk_freerun_int),
         .gtwiz_reset_all_in         (gtwiz_reset_all_int),
-        .gtwiz_reset_tx_datapath_in (1'b0),
-        .gtwiz_reset_rx_datapath_in (1'b0),
-        .txdata_in                  (gt0_txdata),
+        .gtwiz_reset_tx_datapath_in (gt_reset_tx_datapath[0]),
+        .gtwiz_reset_rx_datapath_in (gt_reset_rx_datapath[0]),
+        .txdata_in                  (gt_txdata[0]),
         .txctrl0_in                 (),
         .txctrl1_in                 (),
-        .txctrl2_in                 (gt0_txctrl),
-        .rxdata_out                 (gt0_rxdata),
+        .txctrl2_in                 (gt_txctrl[0]),
+        .rxdata_out                 (gt_rxdata[0]),
         .rxctrl0_out                (),
         .rxctrl1_out                (),
-        .rxctrl2_out                (gt0_rxctrl),
+        .rxctrl2_out                (gt_rxctrl[0]),
         .rxctrl3_out                (),
-        .tx_usrclk2_out             (gt0_tx_usrclk),
-        .rx_usrclk2_out             (gt0_rx_usrclk),
-        .tx_reset_done_out          (gt0_tx_reset_done),
-        .rx_reset_done_out          (gt0_rx_reset_done),
-        .rxbyterealign_out          (gt0_rxbyterealign)
+        .tx_usrclk2_out             (gt_tx_usrclk[0]),
+        .rx_usrclk2_out             (gt_rx_usrclk[0]),
+        .tx_reset_done_out          (gt_reset_tx_done[0]),
+        .rx_reset_done_out          (gt_reset_rx_done[0]),
+        .rxbyterealign_out          (gt_rxbyterealign[0])
     );
 
     gtwizard_ultrascale_1_example_top  gtwizard_ultrascale_1_example_top_inst (
@@ -463,76 +275,74 @@ module gt_8b10b_dual_lane(
         .ch0_gtytxp_out             (TXP[1]),
         .gtwiz_reset_clk_freerun_in (gtwiz_reset_clk_freerun_int),
         .gtwiz_reset_all_in         (gtwiz_reset_all_int),
-        .gtwiz_reset_tx_datapath_in (1'b0),
-        .gtwiz_reset_rx_datapath_in (1'b0),
-        .txdata_in                  (gt1_txdata),
+        .gtwiz_reset_tx_datapath_in (gt_reset_tx_datapath[1]),
+        .gtwiz_reset_rx_datapath_in (gt_reset_rx_datapath[1]),
+        .txdata_in                  (gt_txdata[1]),
         .txctrl0_in                 (),
         .txctrl1_in                 (),
-        .txctrl2_in                 (gt1_txctrl),
-        .rxdata_out                 (gt1_rxdata),
+        .txctrl2_in                 (gt_txctrl[1]),
+        .rxdata_out                 (gt_rxdata[1]),
         .rxctrl0_out                (),
         .rxctrl1_out                (),
-        .rxctrl2_out                (gt1_rxctrl),
+        .rxctrl2_out                (gt_txctrl[1]),
         .rxctrl3_out                (),
-        .tx_usrclk2_out             (gt1_tx_usrclk),
-        .rx_usrclk2_out             (gt1_rx_usrclk),
-        .tx_reset_done_out          (gt1_tx_reset_done),
-        .rx_reset_done_out          (gt1_rx_reset_done),
-        .rxbyterealign_out          (gt1_rxbyterealign)
+        .tx_usrclk2_out             (gt_tx_usrclk[1]),
+        .rx_usrclk2_out             (gt_rx_usrclk[1]),
+        .tx_reset_done_out          (gt_reset_tx_done[1]),
+        .rx_reset_done_out          (gt_reset_rx_done[1]),
+        .rxbyterealign_out          (gt_rxbyterealign[1])
+    );
+
+    gt_lane_reset_manager  gt_lane_reset_manager_inst (
+        .i_freerun_clk              (gtwiz_reset_clk_freerun_int),
+        .i_sys_rst                  (sys_rst                    ),
+        .i_soft_reset_all           (gtwiz_reset_all_int        ),
+        .i_tx_usrclk                (gt_tx_usrclk               ),
+        .i_rx_usrclk                (gt_rx_usrclk               ),
+        .i_gtwiz_reset_tx_done      (gt_reset_tx_done           ),
+        .i_gtwiz_reset_rx_done      (gt_reset_rx_done           ),
+        .i_sfp_los                  (i_sfp_los                  ),
+        .i_rxbyterealign            (gt_rxbyterealign           ),
+        .o_gtwiz_reset_tx_datapath  (gt_reset_tx_datapath       ),
+        .o_gtwiz_reset_rx_datapath  (gt_reset_rx_datapath       ),
+        .o_tx_user_reset            (tx_user_reset              ),
+        .o_rx_user_reset            (rx_user_reset              ),
+        .o_tx_channel_up            (tx_channel_up              ),
+        .o_rx_channel_up            (rx_channel_up              )
     );
 
     AXI2GI # (
-        .WORDS_IN_BRAM(WORDS_IN_BRAM),
-        .LANE_NUM(LANE_NUM)
+        .WORDS_IN_BRAM(WORDS_IN_BRAM)
     ) TX_AXI2GI (
-        .i_gt_txresetdone   ({gt1_tx_reset_done, gt0_tx_reset_done} ),
-        .i_s_axi_rx_tdata   (gt_s_axis_tdata                        ),
-        .i_s_axi_rx_tkeep   (gt_s_axis_tkeep                        ),
-        .i_s_axi_rx_tvalid  (gt_s_axis_tvalid                       ),
-        .o_s_axi_rx_tready  (gt_s_axis_tready                       ),
-        .i_s_axi_rx_tlast   (gt_s_axis_tlast                        ),
-        .o_tx_data_out      (gt_txdata                              ),
-        .o_txctrl_out       (gt_txctrl                              ), 
-        .i_user_clk         (gt0_tx_usrclk                          ),
-        .i_system_reset     (gt_sys_rst | ~gt_tx_channel_up         )
+        .i_gt_txresetdone   (gt_reset_tx_done  ),
+        .i_s_axi_rx_tdata   (gt_s_axis_tdata   ),
+        .i_s_axi_rx_tkeep   (gt_s_axis_tkeep   ),
+        .i_s_axi_rx_tvalid  (gt_s_axis_tvalid  ),
+        .o_s_axi_rx_tready  (gt_s_axis_tready  ),
+        .i_s_axi_rx_tlast   (gt_s_axis_tlast   ),
+        .o_tx_data_out      (gt_txdata         ),
+        .o_txctrl_out       (gt_txctrl         ), 
+        .i_user_clk         (gt_tx_usrclk      ),
+        .i_system_reset     (tx_lane_reset     )
     );
 
     GI2AXI # (
-        .WORDS_IN_BRAM(WORDS_IN_BRAM),
-        .LANE_NUM(LANE_NUM)
+        .WORDS_IN_BRAM(WORDS_IN_BRAM)
     ) RX_GI2AXI0 (
-        .i_gt_rxresetdone   (gt0_rx_reset_done),
-        .i_rx_data_in       (gt0_rxdata),
-        .i_rxctrl_in        (gt0_rxctrl),
+        .i_gt_rxresetdone   (gt_reset_rx_done),
+        .i_rx_data_in       (gt_rxdata),
+        .i_rxctrl_in        (gt_rxctrl),
         .i_rx_clk           (),
         .o_m_axi_tx_tdata   (gt0_m_axis_tdata),
         .o_m_axi_tx_tkeep   (gt0_m_axis_tkeep),
         .o_m_axi_tx_tvalid  (gt0_m_axis_tvalid),
         .i_m_axi_tx_tready  (gt0_m_axis_tready),
         .o_m_axi_tx_tlast   (gt0_m_axis_tlast),
-        .i_user_clk         (gt0_rx_usrclk),
-        .i_system_reset     (i_system_reset),
-        .o_lane_aligned     (o_lane_aligned),
-        .o_rx_crc_error     (o_rx_crc_error)
+        .i_user_clk         (gt_rx_usrclk),
+        .i_system_reset     (),
+        .o_lane_aligned     (),
+        .o_rx_crc_error     ()
     );
 
-    GI2AXI # (
-        .WORDS_IN_BRAM(WORDS_IN_BRAM),
-        .LANE_NUM(LANE_NUM)
-    ) RX_GI2AXI1 (
-        .i_gt_rxresetdone   (gt1_rx_reset_done),
-        .i_rx_data_in       (gt1_rxdata),
-        .i_rxctrl_in        (gt1_rxctrl),
-        .i_rx_clk           (),
-        .o_m_axi_tx_tdata   (gt1_m_axis_tdata),
-        .o_m_axi_tx_tkeep   (gt1_m_axis_tkeep),
-        .o_m_axi_tx_tvalid  (gt1_m_axis_tvalid),
-        .i_m_axi_tx_tready  (gt1_m_axis_tready),
-        .o_m_axi_tx_tlast   (gt1_m_axis_tlast),
-        .i_user_clk         (gt1_rx_usrclk),
-        .i_system_reset     (i_system_reset),
-        .o_lane_aligned     (o_lane_aligned),
-        .o_rx_crc_error     (o_rx_crc_error)
-    );
 
 endmodule
