@@ -27,7 +27,6 @@ module gt_rx_reset #(
     input  logic i_freerun_clk,
     input  logic i_freerun_rst,
 
-    input  logic i_soft_reset_all,
     input  logic i_rx_usrclk,
     input  logic i_gtwiz_reset_rx_done,
     input  logic i_sfp_los,
@@ -62,8 +61,11 @@ module gt_rx_reset #(
     logic        realign_pulse;  
     assign realign_pulse = i_rxbyterealign & ~rxbyterealign_d1;  
 
-    always_ff @(posedge i_rx_usrclk) begin
-        rxbyterealign_d1 <= i_rxbyterealign;
+    always_ff @(posedge i_rx_usrclk or posedge o_rx_user_reset) begin
+        if (o_rx_user_reset)
+            rxbyterealign_d1 <= 1'b0;
+        else
+            rxbyterealign_d1 <= i_rxbyterealign;
     end
 
     logic [19:0] realign_window_cnt;
@@ -74,9 +76,9 @@ module gt_rx_reset #(
     always_comb 
     begin
         if (realign_pulse && (realign_cnt < 2'd2))
-            realign_cnt_now <= realign_cnt + 1'b1;
+            realign_cnt_now = realign_cnt + 1'b1;
         else
-            realign_cnt_now <= realign_cnt;
+            realign_cnt_now = realign_cnt;
     end
 
     always_ff @(posedge i_rx_usrclk)
@@ -143,7 +145,7 @@ module gt_rx_reset #(
     // RX Reset State Machine
     // =====================================================================
     logic rx_reset_request;
-    assign rx_reset_request = i_soft_reset_all | i_sfp_los;
+    assign rx_reset_request = i_sfp_los;
 
     typedef enum logic [1:0] {
         ST_RESET,
@@ -182,7 +184,7 @@ module gt_rx_reset #(
             ST_RESET: begin
                 if (rx_reset_request)
                     rx_reset_next_state = ST_RESET;
-                else if ((hold_cnt == RESET_HOLD_CYCLES - 1) & !i_gtwiz_reset_rx_done)
+                else if (hold_cnt == RESET_HOLD_CYCLES - 1)
                     rx_reset_next_state = ST_WAIT_DONE;
                 else
                     rx_reset_next_state = ST_RESET;
@@ -191,7 +193,7 @@ module gt_rx_reset #(
             ST_WAIT_DONE: begin
                 if (rx_reset_request)
                     rx_reset_next_state = ST_RESET;
-                else if (i_gtwiz_reset_rx_done & !realign_reset_req_sync)
+                else if (i_gtwiz_reset_rx_done && !realign_reset_req_sync)
                     rx_reset_next_state = ST_RUN;
                 else 
                     rx_reset_next_state = ST_WAIT_DONE;

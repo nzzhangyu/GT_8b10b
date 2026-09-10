@@ -20,10 +20,13 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 
-module gt_lane_reset_manager(
+module gt_lane_reset_manager #(
+    parameter int TX_CHANNEL_UP_DELAY_CYCLES = 100000
+)(
     input  logic i_freerun_clk,
-    input  logic i_sys_rst,
- 
+
+    // Global soft reset: asynchronous assertion and synchronous release
+    // in the freerun clock domain.
     input  logic i_soft_reset_all,
 
     input  logic [1:0] i_tx_usrclk,
@@ -46,36 +49,25 @@ module gt_lane_reset_manager(
     output logic [1:0] o_rx_channel_up
     );
 
-    // freerun reset synchronizer
+    // Freerun-domain root reset: asynchronous assertion, synchronous release.
     (* ASYNC_REG = "TRUE" *) logic [2:0] freerun_rst_pipe = 3'b111;
     wire freerun_rst = freerun_rst_pipe[2];
 
-    always_ff @(posedge i_freerun_clk or posedge i_sys_rst) 
+    always_ff @(posedge i_freerun_clk or posedge i_soft_reset_all)
     begin
-        if (i_sys_rst)
+        if (i_soft_reset_all)
             freerun_rst_pipe <= 3'b111;
         else
             freerun_rst_pipe <= {freerun_rst_pipe[1:0], 1'b0};
     end
 
-    // async input synchronizer
-    (* ASYNC_REG = "TRUE" *) logic [1:0] soft_reset_all_pipe = 2'b00;
+    // Asynchronous input synchronizers
     (* ASYNC_REG = "TRUE" *) logic [1:0] reset_tx_done_d1;
     (* ASYNC_REG = "TRUE" *) logic [1:0] reset_tx_done_d2;
     (* ASYNC_REG = "TRUE" *) logic [1:0] reset_rx_done_d1;
     (* ASYNC_REG = "TRUE" *) logic [1:0] reset_rx_done_d2;
     (* ASYNC_REG = "TRUE" *) logic [1:0] sfp_los_d1;
     (* ASYNC_REG = "TRUE" *) logic [1:0] sfp_los_d2;
-    wire soft_reset_all_sync = soft_reset_all_pipe[1];
-
-    always_ff @(posedge i_freerun_clk)
-    begin
-        if (freerun_rst)
-            soft_reset_all_pipe <= 2'b00;
-        else 
-            soft_reset_all_pipe <= {soft_reset_all_pipe[0], i_soft_reset_all};
-    end
-
     always_ff @(posedge i_freerun_clk)
     begin
         if (freerun_rst)
@@ -107,11 +99,11 @@ module gt_lane_reset_manager(
     generate 
         for (genvar i = 0; i < 2; i = i + 1) begin : tx_lane_reset
             gt_tx_reset # (
-                .RESET_HOLD_CYCLES(16)
+                .RESET_HOLD_CYCLES       (16),
+                .CHANNEL_UP_DELAY_CYCLES (TX_CHANNEL_UP_DELAY_CYCLES)
             ) gt_tx_reset_inst (
                 .i_freerun_clk              (i_freerun_clk                  ),
                 .i_freerun_rst              (freerun_rst                    ),
-                .i_soft_reset_all           (soft_reset_all_sync            ),
                 .i_tx_usrclk                (i_tx_usrclk[i]                 ),
                 .i_gtwiz_reset_tx_done      (reset_tx_done_d2[i]            ),
                 .o_gtwiz_reset_tx_datapath  (o_gtwiz_reset_tx_datapath[i]   ),
@@ -130,7 +122,6 @@ module gt_lane_reset_manager(
             u_gt_rx_reset (
                 .i_freerun_clk              (i_freerun_clk                 ),
                 .i_freerun_rst              (freerun_rst                   ),
-                .i_soft_reset_all           (soft_reset_all_sync           ),
                 .i_rx_usrclk                (i_rx_usrclk[i]                ),
                 .i_gtwiz_reset_rx_done      (reset_rx_done_d2[i]           ),
                 .i_sfp_los                  (sfp_los_d2[i]                 ),
