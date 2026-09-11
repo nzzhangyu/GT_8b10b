@@ -14,12 +14,12 @@ module AXI2GI #(
     input  logic         s_axi_rx_tlast, 
     
     // GT Transceiver Interface Outputs
-    output logic [63:0]  o_tx_data_out,   
-    output logic [7:0]   o_txctrl_out,    
+    output logic [31:0]  o_tx_data_out [1:0],
+    output logic [3:0]   o_txctrl_out  [1:0],
 
     // System Interface
     input  logic [1:0]   i_tx_usrclk,          
-    input  logic         i_tx_user_reset    
+    input  logic [1:0]   i_tx_user_reset
     );
 
     // ====================================================================
@@ -86,17 +86,9 @@ module AXI2GI #(
     logic [31:0] tx_data_slice [1:0];
     logic [3:0]  tx_ctrl_slice [1:0];
     
-    logic [1:0] rst_fifo;
-    logic [1:0] gt_r0;
-    logic [1:0] gt_r1;
-    logic [1:0] gt_r2;
-    logic [1:0] gt_r3;
-    logic [1:0] gt_sync;
-
-    // Lane FIFO health monitoring 
+    // Lane FIFO health monitoring
     logic [1:0] lane_fifo_full;
     logic [1:0] lane_fifo_empty;
-    logic [1:0] lane_fifo_err_sticky;  // set if lane FIFO ever under/overflows
 
     // ====================================================================
     //  Core Logic Implementation
@@ -116,7 +108,7 @@ module AXI2GI #(
 
     // Tracks complete frame count in FIFO to prevent underflow
     always_ff @(posedge i_tx_usrclk[0]) begin
-        if (i_tx_user_reset) begin
+        if (i_tx_user_reset[0]) begin
             pkt_in_fifo <= 16'd0;
         end
         else begin
@@ -143,7 +135,7 @@ module AXI2GI #(
         .USE_ADV_FEATURES   ("0A02")   
     ) tx_elastic_fifo (
         .wr_clk      (i_tx_usrclk[0]    ),
-        .rst         (i_tx_user_reset   ),
+        .rst         (i_tx_user_reset[0]),
         .wr_en       (fifo_wr_en        ),
         .din         (fifo_din          ),
         .full        (                  ),            
@@ -159,7 +151,7 @@ module AXI2GI #(
     // 32us Alignment Timer
     // --------------------------------------------------------------------
     always_ff @(posedge i_tx_usrclk[0]) begin
-        if (i_tx_user_reset) begin
+        if (i_tx_user_reset[0]) begin
             timer_1us_cnt  <= 12'd0;
             timer_32us_cnt <= 6'd0;
             need_align     <= 1'b0;
@@ -190,7 +182,7 @@ module AXI2GI #(
     // Main Transmission FSM (GT Link Scheduler)
     // --------------------------------------------------------------------
     always_ff @(posedge i_tx_usrclk[0]) begin
-        if (i_tx_user_reset) begin
+        if (i_tx_user_reset[0]) begin
             link_state <= ST_IDLE;
             align_cnt  <= 6'd0;
         end 
@@ -246,7 +238,7 @@ module AXI2GI #(
     // [4] Data Formatting & Datapath Muxing
     // --------------------------------------------------------------------
     always_ff @(posedge i_tx_usrclk[0]) begin
-        if (i_tx_user_reset) begin
+        if (i_tx_user_reset[0]) begin
             tx_data_final <= {2{32'hF7F7F7F7}};
             tx_ctrl_final <= {2{4'hF}};
         end 
@@ -327,7 +319,7 @@ module AXI2GI #(
     for (genvar i = 0; i < 4; i++) begin : gen_crc
         CRC_16 tx_crc_inst (
             .i_clk       (i_tx_usrclk[0]  ), 
-            .i_rst       (i_tx_user_reset ), 
+            .i_rst       (i_tx_user_reset[0]),
             .i_crc_clear (crc_clear       ),
             .i_crc_en    (crc_en          ), 
             .i_data      (crc_in_bus[i]   ), 
@@ -350,40 +342,31 @@ module AXI2GI #(
             .DATA          (tx_data_slice[lane] ), 
             .CHAR_IS_K     (tx_ctrl_slice[lane] ),
             .CLEAR         (clear_scrambler     ), 
-            .RESET         (i_tx_user_reset     ), 
+            .RESET         (i_tx_user_reset[0]  ),
             .USER_CLK      (i_tx_usrclk[0]      )
         );
 
         assign lane_fifo_in[lane] = {tx_data_pre[lane], tx_ctrl_pre[lane]};
-
-        fifo_rx_gtdata fifo_lane (
-            .rst    (~rst_fifo[lane]       ), 
-            .wr_clk (i_tx_usrclk[0]        ), 
-            .rd_clk (i_tx_usrclk[1]        ),
-            .din    (lane_fifo_in[lane]    ), 
-            .wr_en  (1'b1                  ), 
-            .rd_en  (1'b1                  ),
-            .dout   (lane_fifo_out[lane]   ), 
-            .full   (lane_fifo_full[lane]  ), 
-            .empty  (lane_fifo_empty[lane] )
-        );
-
-        assign o_tx_data_out[lane*32 +: 32] = lane_fifo_out[lane][35:4];
-        assign o_txctrl_out[lane*4  +: 4 ]  = lane_fifo_out[lane][3:0];
-
-        always_ff @(posedge i_tx_usrclk) begin
-            {gt_sync[lane], gt_r3[lane], gt_r2[lane], gt_r1[lane], gt_r0[lane]} <=
-                {gt_r3[lane], gt_r2[lane], gt_r1[lane], gt_r0[lane], i_gt_reset_tx_done[lane]};
-            rst_fifo[lane] <= gt_sync[lane];
-        end
-
-        // FIFO health monitor
-        always_ff @(posedge i_tx_usrclk[0]) begin
-            if (i_tx_user_reset) 
-                lane_fifo_err_sticky[lane] <= 1'b0;
-            else
-                lane_fifo_err_sticky[lane] <= lane_fifo_full[lane] | lane_fifo_empty[lane];
-        end
     end
+
+    // Lane 0 remains in the AXI transmit clock domain.
+    assign o_tx_data_out[0] = tx_data_pre[0];
+    assign o_txctrl_out[0]  = tx_ctrl_pre[0];
+
+    // Lane 1 crosses from lane 0 TX user clock to lane 1 TX user clock.
+    fifo_rx_gtdata fifo_lane_1 (
+        .rst    (i_tx_user_reset[0] | i_tx_user_reset[1]),
+        .wr_clk (i_tx_usrclk[0]                         ),
+        .rd_clk (i_tx_usrclk[1]                         ),
+        .din    (lane_fifo_in[1]                        ),
+        .wr_en  (~i_tx_user_reset[0]                    ),
+        .rd_en  (~i_tx_user_reset[1]                    ),
+        .dout   (lane_fifo_out[1]                       ),
+        .full   (lane_fifo_full[1]                      ),
+        .empty  (lane_fifo_empty[1]                     )
+    );
+
+    assign o_tx_data_out[1] = lane_fifo_out[1][35:4];
+    assign o_txctrl_out[1]  = lane_fifo_out[1][3:0];
 
 endmodule   

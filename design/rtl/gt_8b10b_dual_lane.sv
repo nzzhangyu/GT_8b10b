@@ -25,35 +25,41 @@ module gt_8b10b_dual_lane(
     input  wire i_mgtrefclk,
     input  wire i_soft_rst,
 
-    input  wire [1:0]  RXP,
-    input  wire [1:0]  RXN,
-    output wire [1:0]  TXP,
-    output wire [1:0]  TXN,
+    input  wire [1:0]  i_rxp,
+    input  wire [1:0]  i_rxn,
+    output wire [1:0]  o_txp,
+    output wire [1:0]  o_txn,
 
-    input  wire [0:0]  INIT_CLK_IN,
+    input  wire [0:0]  i_init_clk,
 
-    output wire [0:0]  gt_tx_channel_up,
-    output wire        gt_tx_lock,
+    output wire [0:0]  o_gt_tx_channel_up,
+    output wire        o_gt_tx_lock,
 
-    input  wire [63:0] gt_s_axis_tdata,
-    input  wire [7:0]  gt_s_axis_tkeep,
-    input  wire        gt_s_axis_tvalid,
-    output wire        gt_s_axis_tready,
-    input  wire        gt_s_axis_tlast,
+    input  wire [63:0] s_axi_tx_tdata,
+    input  wire [7:0]  s_axi_tx_tkeep,
+    input  wire        s_axi_tx_tvalid,
+    output wire        s_axi_tx_tready,
+    input  wire        s_axi_tx_tlast,
+    output wire        s_axi_tx_aclk,
+    output wire        s_axi_tx_aresetn,
 
 
-    output wire [63:0] gt_m_axis_tdata,
-    output wire [7:0]  gt_m_axis_tkeep,
-    output wire        gt_m_axis_tvalid,
-    input  wire        gt_m_axis_tready,
-    output wire        gt_m_axis_tlast,
+    output wire [63:0] m_axi_rx_tdata,
+    output wire [7:0]  m_axi_rx_tkeep,
+    output wire        m_axi_rx_tvalid,
+    input  wire        m_axi_rx_tready,
+    output wire        m_axi_rx_tlast,
+    output wire        m_axi_rx_aclk,
+    output wire        m_axi_rx_aresetn,
+
+    output wire        o_rx_lane_aligned,
+    output wire        o_rx_lane_crc_err,
     
     input  wire [1:0]  i_sfp_los,
 
-    input  wire sys_clk
+    input  wire i_sys_clk
     );
 
-    localparam logic [9:0] CNT_1MS = 10'h3E7;
     localparam int WORDS_IN_BRAM = 512;
 
     // GTY Quad PLL signals
@@ -67,10 +73,10 @@ module gt_8b10b_dual_lane(
     logic qpll1outrefclk_int;
     logic qpll1reset_int;
 
-    assign gt_tx_lock = qpll0lock_int & qpll1lock_int;
+    assign o_gt_tx_lock = qpll0lock_int & qpll1lock_int;
 
     logic gtwiz_reset_clk_freerun_int;
-    assign gtwiz_reset_clk_freerun_int = INIT_CLK_IN;
+    assign gtwiz_reset_clk_freerun_int = i_init_clk;
 
     // System Reset Logic
     logic gtwiz_reset_all_int;
@@ -90,9 +96,13 @@ module gt_8b10b_dual_lane(
     logic [1:0]  gt_reset_rx_datapath;
 
     logic [31:0] gt_txdata[1:0];
-    logic [7:0]  gt_txctrl[1:0];
+    logic [3:0]  gt_txctrl[1:0];
     logic [31:0] gt_rxdata[1:0];
     logic [7:0]  gt_rxctrl[1:0];
+    logic [3:0]  gt_rxctrl_low[1:0];
+
+    assign gt_rxctrl_low[0] = gt_rxctrl[0][3:0];
+    assign gt_rxctrl_low[1] = gt_rxctrl[1][3:0];
     
     logic [1:0] gt_tx_usrclk;
     logic [1:0] gt_rx_usrclk;
@@ -104,16 +114,32 @@ module gt_8b10b_dual_lane(
 
     logic [1:0] tx_user_reset;
     logic [1:0] rx_user_reset;
-    logic       tx_lane_reset;
-    assign tx_lane_reset = gt_reset_tx_done[0] | gt_reset_tx_done[1];
+    logic [2:0] tx_axi_reset_pipe = 3'b111;
+    logic       tx_axi_reset;
+
+    always_ff @(posedge gt_tx_usrclk[0] or posedge tx_user_reset[0] or posedge tx_user_reset[1]) begin
+        if (tx_user_reset[0] || tx_user_reset[1])
+            tx_axi_reset_pipe <= 3'b111;
+        else
+            tx_axi_reset_pipe <= {tx_axi_reset_pipe[1:0], 1'b0};
+    end
+
+    assign tx_axi_reset      = tx_axi_reset_pipe[2];
+    assign s_axi_tx_aclk     = gt_tx_usrclk[0];
+    assign s_axi_tx_aresetn  = ~tx_axi_reset;
+    assign m_axi_rx_aclk     = i_sys_clk;
 
     logic [1:0] tx_channel_up;
     logic [1:0] rx_channel_up;
     logic       tx_all_channels_up;
-    assign tx_all_channels_up = tx_channel_up[0] & tx_channel_up[1];
+    logic       rx_lane_aligned;
+    logic       rx_lane_crc_err;
 
-    logic rx_lane_aligned;
-    logic rx_lane_crc_err;
+    assign tx_all_channels_up = tx_channel_up[0] & tx_channel_up[1];
+    assign o_gt_tx_channel_up = tx_all_channels_up;
+
+    assign o_rx_lane_aligned = rx_lane_aligned;
+    assign o_rx_lane_crc_err = rx_lane_crc_err;
 
     gtwizard_ultrascale_0_gtye4_common_wrapper gtye4_common_wrapper_inst (
         .GTYE4_COMMON_BGBYPASSB         (1'b1                   ),
@@ -234,10 +260,10 @@ module gt_8b10b_dual_lane(
         .qpll0clk_in                (qpll0outclk_int            ),
         .qpll0outrefclk_in          (qpll0outrefclk_int         ),
         .qpll0_rst_out              (qpll0reset_int             ),
-        .ch0_gtyrxn_in              (RXN[0]                     ),
-        .ch0_gtyrxp_in              (RXP[0]                     ),
-        .ch0_gtytxn_out             (TXN[0]                     ),
-        .ch0_gtytxp_out             (TXP[0]                     ),
+        .ch0_gtyrxn_in              (i_rxn[0]                   ),
+        .ch0_gtyrxp_in              (i_rxp[0]                   ),
+        .ch0_gtytxn_out             (o_txn[0]                   ),
+        .ch0_gtytxp_out             (o_txp[0]                   ),
         .gtwiz_reset_clk_freerun_in (gtwiz_reset_clk_freerun_int),
         .gtwiz_reset_all_in         (gtwiz_reset_all_int        ),
         .gtwiz_reset_tx_datapath_in (gt_reset_tx_datapath[0]    ),
@@ -245,7 +271,7 @@ module gt_8b10b_dual_lane(
         .txdata_in                  (gt_txdata[0]               ),
         .txctrl0_in                 (                           ),
         .txctrl1_in                 (                           ),
-        .txctrl2_in                 (gt_txctrl[0]               ),
+        .txctrl2_in                 ({4'b0000, gt_txctrl[0]}    ),
         .rxdata_out                 (gt_rxdata[0]               ),
         .rxctrl0_out                (                           ),
         .rxctrl1_out                (                           ),
@@ -263,10 +289,10 @@ module gt_8b10b_dual_lane(
         .qpll1clk_in                (qpll1outclk_int            ),
         .qpll1outrefclk_in          (qpll1outrefclk_int         ),
         .qpll1_rst_out              (qpll1reset_int             ),
-        .ch0_gtyrxn_in              (RXN[1]                     ),
-        .ch0_gtyrxp_in              (RXP[1]                     ),
-        .ch0_gtytxn_out             (TXN[1]                     ),
-        .ch0_gtytxp_out             (TXP[1]                     ),
+        .ch0_gtyrxn_in              (i_rxn[1]                   ),
+        .ch0_gtyrxp_in              (i_rxp[1]                   ),
+        .ch0_gtytxn_out             (o_txn[1]                   ),
+        .ch0_gtytxp_out             (o_txp[1]                   ),
         .gtwiz_reset_clk_freerun_in (gtwiz_reset_clk_freerun_int),
         .gtwiz_reset_all_in         (gtwiz_reset_all_int        ),
         .gtwiz_reset_tx_datapath_in (gt_reset_tx_datapath[1]    ),
@@ -274,11 +300,11 @@ module gt_8b10b_dual_lane(
         .txdata_in                  (gt_txdata[1]               ),
         .txctrl0_in                 (                           ),
         .txctrl1_in                 (                           ),
-        .txctrl2_in                 (gt_txctrl[1]               ),
+        .txctrl2_in                 ({4'b0000, gt_txctrl[1]}    ),
         .rxdata_out                 (gt_rxdata[1]               ),
         .rxctrl0_out                (                           ),
         .rxctrl1_out                (                           ),
-        .rxctrl2_out                (gt_txctrl[1]               ),
+        .rxctrl2_out                (gt_rxctrl[1]               ),
         .rxctrl3_out                (                           ),
         .tx_usrclk2_out             (gt_tx_usrclk[1]            ),
         .rx_usrclk2_out             (gt_rx_usrclk[1]            ),
@@ -308,15 +334,15 @@ module gt_8b10b_dual_lane(
         .WORDS_IN_BRAM(WORDS_IN_BRAM)
     ) TX_AXI2GI (
         .i_gt_reset_tx_done (gt_reset_tx_done  ),
-        .s_axi_rx_tdata     (gt_s_axis_tdata   ),
-        .s_axi_rx_tkeep     (gt_s_axis_tkeep   ),
-        .s_axi_rx_tvalid    (gt_s_axis_tvalid  ),
-        .s_axi_rx_tready    (gt_s_axis_tready  ),
-        .s_axi_rx_tlast     (gt_s_axis_tlast   ),
+        .s_axi_rx_tdata     (s_axi_tx_tdata    ),
+        .s_axi_rx_tkeep     (s_axi_tx_tkeep    ),
+        .s_axi_rx_tvalid    (s_axi_tx_tvalid   ),
+        .s_axi_rx_tready    (s_axi_tx_tready   ),
+        .s_axi_rx_tlast     (s_axi_tx_tlast    ),
         .o_tx_data_out      (gt_txdata         ),
         .o_txctrl_out       (gt_txctrl         ), 
         .i_tx_usrclk        (gt_tx_usrclk      ),
-        .i_tx_user_reset    (tx_lane_reset     )
+        .i_tx_user_reset    ({tx_user_reset[1], tx_axi_reset})
     );
 
     GI2AXI # (
@@ -324,14 +350,16 @@ module gt_8b10b_dual_lane(
     ) RX_GI2AXI0 (
         .i_gt_reset_rx_done (gt_reset_rx_done   ),
         .i_rx_data_in       (gt_rxdata          ),
-        .i_rxctrl_in        (gt_rxctrl          ),
-        .i_rx_userclk       (gt_rx_usrclk       ),
-        .m_axi_tx_tdata     (gt_m_axis_tdata    ),
-        .m_axi_tx_tkeep     (gt_m_axis_tkeep    ),
-        .m_axi_tx_tvalid    (gt_m_axis_tvalid   ),
-        .m_axi_tx_tready    (gt_m_axis_tready   ),
-        .m_axi_tx_tlast     (gt_m_axis_tlast    ),
-        .i_user_axi_clk     (gt_rx_usrclk       ),
+        .i_rxctrl_in        (gt_rxctrl_low      ),
+        .i_rx_usrclk        (gt_rx_usrclk       ),
+        .i_rx_user_reset    (rx_user_reset      ),
+        .m_axi_tx_tdata     (m_axi_rx_tdata     ),
+        .m_axi_tx_tkeep     (m_axi_rx_tkeep     ),
+        .m_axi_tx_tvalid    (m_axi_rx_tvalid    ),
+        .m_axi_tx_tready    (m_axi_rx_tready    ),
+        .m_axi_tx_tlast     (m_axi_rx_tlast     ),
+        .m_axi_tx_aresetn   (m_axi_rx_aresetn   ),
+        .i_user_axi_clk     (i_sys_clk          ),
         .o_lane_aligned     (rx_lane_aligned    ),
         .o_rx_crc_error     (rx_lane_crc_err    )
     );

@@ -20,8 +20,6 @@ module aurora_8b10b_SCRAMBLER_TOP (
     wire        seed_lfsr;
     wire [31:0] user_data;
     wire [31:0] scrambled_data;
-    reg         clear_nxt;
-    reg         clear_nxt2;
     reg  [31:0] data_nxt;
 
     // ********************************* Main Body of Code **********************************
@@ -36,13 +34,9 @@ module aurora_8b10b_SCRAMBLER_TOP (
         bypass_r <= bypass_w;
     end
 
-    // register clear to reset scrambler when CC is being sent from SYM_GEN
-    always @(posedge USER_CLK) begin
-        clear_nxt  <= CLEAR;
-        clear_nxt2 <= clear_nxt;
-    end
-
-    assign seed_lfsr = clear_nxt2;
+    // Reset the LFSR as soon as the SOF control word is presented. Delaying
+    // CLEAR would allow payload words to be processed with stale RX state.
+    assign seed_lfsr = CLEAR;
 
     // bypass_w generation using reduction OR
     assign bypass_w[0] = (RESET == 1'b1) ? 1'b1 :
@@ -55,8 +49,8 @@ module aurora_8b10b_SCRAMBLER_TOP (
     assign user_data[15:0]  = (bypass_w[0] == 1'b1) ? 16'h0000 : DATA[15:0];
     assign user_data[31:16] = (bypass_w[1] == 1'b1) ? 16'h0000 : DATA[31:16];
 
-    assign en_scrambler[0]  = ~bypass_w[0];
-    assign en_scrambler[1]  = ~bypass_w[1];
+    assign en_scrambler[0] = ~bypass_w[0];
+    assign en_scrambler[1] = ~bypass_w[1];
 
     // Scrambler Instantiations
     aurora_8b10b_SCRAMBLER #(

@@ -4,7 +4,7 @@ module CRC_16 (
     input  wire        i_crc_clear,
     input  wire        i_crc_en,   
     input  wire [15:0] i_data,
-    output reg  [15:0] o_crc
+    output wire [15:0] o_crc
 );
     
     wire [15:0] crc_data_r;

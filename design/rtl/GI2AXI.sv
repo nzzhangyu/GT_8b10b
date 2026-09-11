@@ -16,6 +16,7 @@ module GI2AXI #(
     output logic         m_axi_tx_tvalid,
     input  logic         m_axi_tx_tready,
     output logic         m_axi_tx_tlast,
+    output logic         m_axi_tx_aresetn,
 
     // AXI Interface
     input  logic         i_user_axi_clk,        // System AXI clock
@@ -31,6 +32,8 @@ module GI2AXI #(
     logic          all_lanes_ready;
     logic          axi_domain_reset;
     logic          rx_logic_reset;
+
+    assign m_axi_tx_aresetn = ~axi_domain_reset;
 
     // Deskew FIFO Signals
     logic [35:0]   fifo_dout [1:0];
