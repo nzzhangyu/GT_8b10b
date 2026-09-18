@@ -394,4 +394,3 @@ module tb_gt_8b10b_selfcheck;
     end
 
 endmodule
-
