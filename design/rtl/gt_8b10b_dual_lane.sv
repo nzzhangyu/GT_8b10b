@@ -54,10 +54,9 @@ module gt_8b10b_dual_lane(
 
     output wire        o_rx_lane_aligned,
     output wire        o_rx_lane_crc_err,
+    output wire        o_rx_frame_drop,
     
-    input  wire [1:0]  i_sfp_los,
-
-    input  wire i_sys_clk
+    input  wire [1:0]  i_sfp_los
     );
 
     localparam int WORDS_IN_BRAM = 512;
@@ -127,7 +126,7 @@ module gt_8b10b_dual_lane(
     assign tx_axi_reset      = tx_axi_reset_pipe[2];
     assign s_axi_tx_aclk     = gt_tx_usrclk[0];
     assign s_axi_tx_aresetn  = ~tx_axi_reset;
-    assign m_axi_rx_aclk     = i_sys_clk;
+    assign m_axi_rx_aclk     = gt_rx_usrclk[0];
 
     logic [1:0] tx_channel_up;
     logic [1:0] rx_channel_up;
@@ -334,11 +333,11 @@ module gt_8b10b_dual_lane(
         .WORDS_IN_BRAM(WORDS_IN_BRAM)
     ) TX_AXI2GI (
         .i_gt_reset_tx_done (gt_reset_tx_done  ),
-        .s_axi_rx_tdata     (s_axi_tx_tdata    ),
-        .s_axi_rx_tkeep     (s_axi_tx_tkeep    ),
-        .s_axi_rx_tvalid    (s_axi_tx_tvalid   ),
-        .s_axi_rx_tready    (s_axi_tx_tready   ),
-        .s_axi_rx_tlast     (s_axi_tx_tlast    ),
+        .s_axi_tx_tdata     (s_axi_tx_tdata    ),
+        .s_axi_tx_tkeep     (s_axi_tx_tkeep    ),
+        .s_axi_tx_tvalid    (s_axi_tx_tvalid   ),
+        .s_axi_tx_tready    (s_axi_tx_tready   ),
+        .s_axi_tx_tlast     (s_axi_tx_tlast    ),
         .o_tx_data_out      (gt_txdata         ),
         .o_txctrl_out       (gt_txctrl         ), 
         .i_tx_usrclk        (gt_tx_usrclk      ),
@@ -353,16 +352,19 @@ module gt_8b10b_dual_lane(
         .i_rxctrl_in        (gt_rxctrl_low      ),
         .i_rx_usrclk        (gt_rx_usrclk       ),
         .i_rx_user_reset    (rx_user_reset      ),
-        .m_axi_tx_tdata     (m_axi_rx_tdata     ),
-        .m_axi_tx_tkeep     (m_axi_rx_tkeep     ),
-        .m_axi_tx_tvalid    (m_axi_rx_tvalid    ),
-        .m_axi_tx_tready    (m_axi_rx_tready    ),
-        .m_axi_tx_tlast     (m_axi_rx_tlast     ),
-        .m_axi_tx_aresetn   (m_axi_rx_aresetn   ),
-        .i_user_axi_clk     (i_sys_clk          ),
+        .m_axi_rx_tdata     (m_axi_rx_tdata     ),
+        .m_axi_rx_tkeep     (m_axi_rx_tkeep     ),
+        .m_axi_rx_tvalid    (m_axi_rx_tvalid    ),
+        .m_axi_rx_tready    (m_axi_rx_tready    ),
+        .m_axi_rx_tlast     (m_axi_rx_tlast     ),
+        .m_axi_rx_aresetn   (m_axi_rx_aresetn   ),
         .o_lane_aligned     (rx_lane_aligned    ),
-        .o_rx_crc_error     (rx_lane_crc_err    )
+        .o_rx_crc_error     (rx_lane_crc_err    ),
+        .o_rx_frame_drop    (o_rx_frame_drop    )
     );
 
 
 endmodule
+
+`default_nettype wire
+
