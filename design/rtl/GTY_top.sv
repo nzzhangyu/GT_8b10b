@@ -4,7 +4,6 @@
 module GTY_top (
     input  wire         i_init_clk,
     input  wire         i_init_clk_rst,
-    input  wire         i_sys_clk,
 
     input  wire         i_mgtrefclk,
 
@@ -46,6 +45,7 @@ module GTY_top (
     output wire         o_8b10b_gt_tx_lock,
     output wire         o_8b10b_rx_lane_aligned,
     output wire         o_8b10b_rx_lane_crc_err,
+    output wire         o_8b10b_rx_frame_drop,
     output wire [1:0]   o_64b66b_rx_hard_err,
     output wire [1:0]   o_64b66b_rx_soft_err,
     output wire [1:0]   o_64b66b_rx_lane_up,
@@ -80,8 +80,8 @@ module GTY_top (
         .m_axi_rx_aresetn   (m_axi_8b10b_rx_aresetn),
         .o_rx_lane_aligned  (o_8b10b_rx_lane_aligned),
         .o_rx_lane_crc_err  (o_8b10b_rx_lane_crc_err),
-        .i_sfp_los          (i_sfp_los             ),
-        .i_sys_clk          (i_sys_clk             )
+        .o_rx_frame_drop    (o_8b10b_rx_frame_drop  ),
+        .i_sfp_los          (i_sfp_los             )
     );
 
     aurora_64b66b_dual_lane u_64b66b_dual_lane (
@@ -107,3 +107,4 @@ module GTY_top (
 endmodule
 
 `default_nettype wire
+
