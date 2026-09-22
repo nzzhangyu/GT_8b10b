@@ -7,11 +7,11 @@ module AXI2GI #(
     input  logic [1:0]   i_gt_reset_tx_done,
     
     // User AXI-Stream Interface (From DDR/DMA)
-    input  logic [63:0]  s_axi_rx_tdata, 
-    input  logic [7:0]   s_axi_rx_tkeep, 
-    input  logic         s_axi_rx_tvalid,
-    output logic         s_axi_rx_tready,
-    input  logic         s_axi_rx_tlast, 
+    input  logic [63:0]  s_axi_tx_tdata, 
+    input  logic [7:0]   s_axi_tx_tkeep, 
+    input  logic         s_axi_tx_tvalid,
+    output logic         s_axi_tx_tready,
+    input  logic         s_axi_tx_tlast, 
     
     // GT Transceiver Interface Outputs
     output logic [31:0]  o_tx_data_out [1:0],
@@ -71,8 +71,8 @@ module AXI2GI #(
     logic [63:0] crc_result;
     logic        crc_clear;
     logic        crc_en;
-    logic [15:0] crc_in_bus  [1:0];
-    logic [15:0] crc_out_bus [1:0];
+    logic [15:0] crc_in_bus  [3:0];
+    logic [15:0] crc_out_bus [3:0];
 
     // 4. FIFO CDC Outputs & Reset Sync Signals
     logic [35:0] lane_fifo_in [1:0];
@@ -97,12 +97,12 @@ module AXI2GI #(
     // --------------------------------------------------------------------
     // AXI-Stream Flow Control & Bubble Packing
     // --------------------------------------------------------------------
-    assign s_axi_rx_tready = ~fifo_prog_full;
+    assign s_axi_tx_tready = ~fifo_prog_full;
     
-    assign fifo_wr_en = s_axi_rx_tvalid && s_axi_rx_tready;
-    assign fifo_din   = {s_axi_rx_tlast, s_axi_rx_tdata};
+    assign fifo_wr_en = s_axi_tx_tvalid && s_axi_tx_tready;
+    assign fifo_din   = {s_axi_tx_tlast, s_axi_tx_tdata};
 
-    assign pkt_wr_done = fifo_wr_en & s_axi_rx_tlast;
+    assign pkt_wr_done = fifo_wr_en & s_axi_tx_tlast;
     assign pkt_rd_done = fifo_rd_en & fifo_dout[64];
     assign pkt_stat    = {pkt_wr_done, pkt_rd_done};
 
@@ -296,7 +296,7 @@ module AXI2GI #(
     gt_idle_Kcode_gen gt_idle_Kcode_gen ( 
         .TX_DATA_OUT(gt_idle_data   ), 
         .TXCTRL_OUT (gt_idle_ctrl   ),    
-        .USER_CLK   (i_tx_usrclk[0]  ), 
+        .USER_CLK   (i_tx_usrclk[0] ), 
         .ENABLE     (1'b1           ) 
     );
 
@@ -305,7 +305,7 @@ module AXI2GI #(
         gtwizard_2_GT_INITSEQ_GEN align_gen (
             .TX_DATA_OUT(gt_align_data[lane*32 +: 32]  ), 
             .TXCTRL_OUT (gt_align_ctrl[lane*4  +: 4 ]  ),
-            .USER_CLK   (i_tx_usrclk[0]                 ), 
+            .USER_CLK   (i_tx_usrclk[0]                ), 
             .ENABLE     (need_align                    )
         );
     end
@@ -318,12 +318,12 @@ module AXI2GI #(
 
     for (genvar i = 0; i < 4; i++) begin : gen_crc
         CRC_16 tx_crc_inst (
-            .i_clk       (i_tx_usrclk[0]  ), 
+            .i_clk       (i_tx_usrclk[0]    ), 
             .i_rst       (i_tx_user_reset[0]),
-            .i_crc_clear (crc_clear       ),
-            .i_crc_en    (crc_en          ), 
-            .i_data      (crc_in_bus[i]   ), 
-            .o_crc       (crc_out_bus[i]  )
+            .i_crc_clear (crc_clear         ),
+            .i_crc_en    (crc_en            ), 
+            .i_data      (crc_in_bus[i]     ), 
+            .o_crc       (crc_out_bus[i]    )
         );
     end
 
@@ -370,3 +370,4 @@ module AXI2GI #(
     assign o_txctrl_out[1]  = lane_fifo_out[1][3:0];
 
 endmodule   
+
