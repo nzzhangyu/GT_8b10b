@@ -1,7 +1,8 @@
 `timescale 1ns / 1ps
 
 module tb_gt_8b10b_top (
-    input  logic        sys_clk,
+    input  logic [1:0]  tx_usrclk,
+    input  logic [1:0]  rx_usrclk,
     input  logic        sys_reset,
 
     // AXI-Stream input to AXI2GI.
@@ -25,12 +26,14 @@ module tb_gt_8b10b_top (
 
     // Link status.
     output logic        lane_aligned,
-    output logic        rx_crc_error
+    output logic        rx_crc_error,
+    output logic        rx_frame_drop
 );
 
     logic       gt_ready;
-    logic [1:0] lane_clks;
+    logic       link_reset;
     logic [1:0] lane_resets;
+    logic       tx_axi_tready;
 
     // AXI2GI and GI2AXI use unpacked lane arrays. The dummy channel uses
     // packed vectors, so keep both representations and convert explicitly.
@@ -46,9 +49,14 @@ module tb_gt_8b10b_top (
 
     logic m_axi_aresetn;
 
-    assign gt_ready    = ~sys_reset;
-    assign lane_clks   = {2{sys_clk}};
-    assign lane_resets = {2{sys_reset}};
+    // Model a complete two-lane GT outage. During a link drop both the
+    // reset-done status and the user-side interfaces are held in reset.
+    assign link_reset  = sys_reset | inj_link_drop;
+    assign gt_ready    = ~link_reset;
+    assign lane_resets = {2{link_reset}};
+
+    // Do not complete source AXI transfers while the simulated GT is down.
+    assign s_axi_tready = gt_ready & tx_axi_tready;
 
     assign tx_data_packed[31:0]  = tx_data_lane[0];
     assign tx_data_packed[63:32] = tx_data_lane[1];
@@ -64,14 +72,14 @@ module tb_gt_8b10b_top (
         .WORDS_IN_BRAM(512)
     ) tx_inst (
         .i_gt_reset_tx_done ({2{gt_ready}} ),
-        .s_axi_rx_tdata     (s_axi_tdata   ),
-        .s_axi_rx_tkeep     (s_axi_tkeep   ),
-        .s_axi_rx_tvalid    (s_axi_tvalid  ),
-        .s_axi_rx_tready    (s_axi_tready  ),
-        .s_axi_rx_tlast     (s_axi_tlast   ),
+        .s_axi_tx_tdata     (s_axi_tdata   ),
+        .s_axi_tx_tkeep     (s_axi_tkeep   ),
+        .s_axi_tx_tvalid    (s_axi_tvalid & gt_ready),
+        .s_axi_tx_tready    (tx_axi_tready ),
+        .s_axi_tx_tlast     (s_axi_tlast   ),
         .o_tx_data_out      (tx_data_lane  ),
         .o_txctrl_out       (tx_ctrl_lane  ),
-        .i_tx_usrclk        (lane_clks     ),
+        .i_tx_usrclk        (tx_usrclk     ),
         .i_tx_user_reset    (lane_resets   )
     );
 
@@ -79,7 +87,8 @@ module tb_gt_8b10b_top (
         .MAX_SKEW(63),
         .LANE_NUM(2)
     ) channel_inst (
-        .clk            (sys_clk        ),
+        .i_tx_clk       (tx_usrclk      ),
+        .i_rx_clk       (rx_usrclk      ),
         .rst            (sys_reset      ),
         .i_tx_data      (tx_data_packed ),
         .i_tx_ctrl      (tx_ctrl_packed ),
@@ -96,17 +105,18 @@ module tb_gt_8b10b_top (
         .i_gt_reset_rx_done ({2{gt_ready}} ),
         .i_rx_data_in       (rx_data_lane  ),
         .i_rxctrl_in        (rx_ctrl_lane  ),
-        .i_rx_usrclk        (lane_clks     ),
+        .i_rx_usrclk        (rx_usrclk     ),
         .i_rx_user_reset    (lane_resets   ),
-        .m_axi_tx_tdata     (m_axi_tdata   ),
-        .m_axi_tx_tkeep     (m_axi_tkeep   ),
-        .m_axi_tx_tvalid    (m_axi_tvalid  ),
-        .m_axi_tx_tready    (m_axi_tready  ),
-        .m_axi_tx_tlast     (m_axi_tlast   ),
-        .m_axi_tx_aresetn   (m_axi_aresetn ),
-        .i_user_axi_clk     (sys_clk       ),
+        .m_axi_rx_tdata     (m_axi_tdata   ),
+        .m_axi_rx_tkeep     (m_axi_tkeep   ),
+        .m_axi_rx_tvalid    (m_axi_tvalid  ),
+        .m_axi_rx_tready    (m_axi_tready  ),
+        .m_axi_rx_tlast     (m_axi_tlast   ),
+        .m_axi_rx_aresetn   (m_axi_aresetn ),
         .o_lane_aligned     (lane_aligned  ),
-        .o_rx_crc_error     (rx_crc_error  )
+        .o_rx_crc_error     (rx_crc_error  ),
+        .o_rx_frame_drop    (rx_frame_drop )
     );
 
 endmodule
+
