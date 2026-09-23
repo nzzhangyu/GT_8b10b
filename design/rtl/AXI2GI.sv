@@ -32,8 +32,11 @@ module AXI2GI #(
     logic [64:0]   fifo_din;          // {tlast, tdata}
     logic [64:0]   fifo_dout;
     logic          fifo_empty;
+    logic          fifo_full;
     logic          fifo_prog_full;
     logic          fifo_prog_empty;
+    logic          fifo_wr_rst_busy;
+    logic          fifo_rd_rst_busy;
     logic [15:0]   pkt_in_fifo;       // Tracks the number of complete packets in the FIFO
 
     logic          pkt_wr_done;
@@ -97,7 +100,7 @@ module AXI2GI #(
     // --------------------------------------------------------------------
     // AXI-Stream Flow Control & Bubble Packing
     // --------------------------------------------------------------------
-    assign s_axi_tx_tready = ~fifo_prog_full;
+    assign s_axi_tx_tready = ~fifo_prog_full && ~fifo_full && ~fifo_wr_rst_busy;
     
     assign fifo_wr_en = s_axi_tx_tvalid && s_axi_tx_tready;
     assign fifo_din   = {s_axi_tx_tlast, s_axi_tx_tdata};
@@ -132,19 +135,25 @@ module AXI2GI #(
         .READ_DATA_WIDTH    (65),
         .PROG_FULL_THRESH   (3072),    
         .PROG_EMPTY_THRESH  (WORDS_IN_BRAM),    
-        .USE_ADV_FEATURES   ("0A02")   
+        .USE_ADV_FEATURES   ("0202")   
     ) tx_elastic_fifo (
         .wr_clk      (i_tx_usrclk[0]    ),
         .rst         (i_tx_user_reset[0]),
         .wr_en       (fifo_wr_en        ),
         .din         (fifo_din          ),
-        .full        (                  ),            
+        .full        (fifo_full         ),            
         .prog_full   (fifo_prog_full    ),
+        .wr_rst_busy (fifo_wr_rst_busy  ),
             
         .rd_en       (fifo_rd_en        ),
         .dout        (fifo_dout         ),
         .empty       (fifo_empty        ),
-        .prog_empty  (fifo_prog_empty   )
+        .prog_empty  (fifo_prog_empty   ),
+        .rd_rst_busy (fifo_rd_rst_busy  ),
+
+        .sleep        (1'b0             ),
+        .injectsbiterr(1'b0             ),
+        .injectdbiterr(1'b0             )
     );
 
     // --------------------------------------------------------------------
@@ -229,7 +238,7 @@ module AXI2GI #(
     end
 
     // FSM auxiliary control signals
-    assign fifo_rd_en = (link_state == ST_DATA) && !fifo_empty;
+    assign fifo_rd_en = (link_state == ST_DATA) && !fifo_empty && !fifo_rd_rst_busy;
     assign crc_clear  = (link_state == ST_SOF);
     assign crc_en     = (link_state == ST_DATA) && !fifo_empty;
     // assign align_en   = (link_state == ST_ALIGN);
